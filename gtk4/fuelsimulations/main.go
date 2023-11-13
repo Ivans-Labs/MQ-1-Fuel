@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"time"
@@ -23,7 +24,7 @@ func main() {
 func activate(app *gtk.Application) {
 	window := gtk.NewApplicationWindow(app)
 	window.SetTitle("Fuel Calculator")
-	window.SetDefaultSize(400, 300)
+	window.SetDefaultSize(800, 300) // Increased width to accommodate warning system
 
 	// Create a grid to organize widgets
 	grid := gtk.NewGrid()
@@ -55,14 +56,17 @@ func activate(app *gtk.Application) {
 	windButton := gtk.NewButtonWithLabel("Toggle Wind Simulation")
 	var windActive bool // Wind simulation state
 
-	windButton.ConnectClicked(func() {
-		windActive = !windActive // Toggle wind simulation
-		if windActive {
-			windButton.SetLabel("Wind Simulation ON")
-		} else {
-			windButton.SetLabel("Wind Simulation OFF")
-		}
-	})
+	// Create a button to simulate ice on wings
+	iceButton := gtk.NewButtonWithLabel("Toggle Ice Simulation")
+	var iceActive bool // Ice on wings simulation state
+
+	// Create a button to simulate degraded engine performance
+	engineButton := gtk.NewButtonWithLabel("Toggle Engine Degradation")
+	var engineDegraded bool // Degraded engine simulation state
+
+	// Create a label to display warnings and cautions
+	warningLabel := gtk.NewLabel("")
+	warningLabel.SetCSSClasses([]string{"warning-label"}) // Add CSS class for styling
 
 	// Add widgets to the grid
 	grid.Attach(forwardLabel, 0, 0, 1, 1)
@@ -73,13 +77,16 @@ func activate(app *gtk.Application) {
 	grid.Attach(brEntry, 1, 2, 1, 1)
 	grid.Attach(startButton, 0, 3, 2, 1)
 	grid.Attach(resultLabel, 0, 4, 2, 1)
-	grid.Attach(windButton, 0, 5, 2, 1)
+	grid.Attach(windButton, 0, 5, 1, 1)
+	grid.Attach(iceButton, 1, 5, 1, 1)
+	grid.Attach(engineButton, 0, 6, 2, 1)
+	grid.Attach(warningLabel, 2, 0, 1, 7) // Span 7 rows for warnings
 
 	// Set up the simulation logic
 	startButton.ConnectClicked(func() {
-		forwardText := forwardEntry.Text() // Corrected: Removed the error check
-		aftText := aftEntry.Text()         // Corrected: Removed the error check
-		brText := brEntry.Text()           // Corrected: Removed the error check
+		forwardText := forwardEntry.Text()
+		aftText := aftEntry.Text()
+		brText := brEntry.Text()
 
 		forward, err := strconv.ParseFloat(forwardText, 64)
 		if err != nil {
@@ -100,85 +107,133 @@ func activate(app *gtk.Application) {
 		// Disable the button to prevent multiple simulations
 		startButton.SetSensitive(false)
 
-		go simulateBurn(forward, aft, br, resultLabel, startButton, &windActive)
+		go simulateBurn(forward, aft, br, resultLabel, startButton, &windActive, &iceActive, &engineDegraded, warningLabel)
+	})
+
+	// Toggle wind simulation
+	windButton.ConnectClicked(func() {
+		windActive = !windActive // Toggle wind simulation
+		if windActive {
+			windButton.SetLabel("Wind Simulation ON")
+		} else {
+			windButton.SetLabel("Wind Simulation OFF")
+		}
+	})
+
+	// Toggle ice simulation
+	iceButton.ConnectClicked(func() {
+		iceActive = !iceActive // Toggle ice simulation
+		if iceActive {
+			iceButton.SetLabel("Ice Simulation ON")
+		} else {
+			iceButton.SetLabel("Ice Simulation OFF")
+		}
+	})
+
+	// Toggle engine degradation
+	engineButton.ConnectClicked(func() {
+		engineDegraded = !engineDegraded // Toggle engine degradation
+		if engineDegraded {
+			engineButton.SetLabel("Engine Degradation ON")
+		} else {
+			engineButton.SetLabel("Engine Degradation OFF")
+		}
 	})
 
 	// Set the grid as the child of the window
 	window.SetChild(grid)
 
-	// Apply CSS for dark theme
+	// Apply CSS for dark theme and white text
 	cssProvider := gtk.NewCSSProvider()
 	cssProvider.LoadFromData(`
-		.result-label {
-			color: white;
-		}
-		window {
-			background-color: #2e2e2e;
-		}
-	`)
+	window {
+		background-color: #2e2e2e;
+		color: white; /* This will set the default text color to white for the window */
+	}
+	label {
+		color: white; /* This ensures all labels have white text */
+	}
+	entry {
+		color: black; /* Input text color for entries */
+		background-color: white; /* Background color for entries */
+	}
+	button {
+		color: white; /* Text color for buttons */
+		background-color: black; /* Background color for buttons */
+	}
+	.warning-label {
+		color: red;
+		font-weight: bold;
+		border-radius: 5px;
+		border: 1px solid red;
+		padding: 5px;
+		margin-top: 10px;
+	}
+`)
 	display := gdk.DisplayGetDefault()
 	gtk.StyleContextAddProviderForDisplay(display, cssProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
 	window.Show()
 }
 
-func simulateBurn(forward, aft, br float64, resultLabel *gtk.Label, startButton *gtk.Button, windActive *bool) {
-	ticker := time.NewTicker(time.Second) // Changed to seconds for faster simulation
-	elapsed := 0
-	swapInterval := 5 * 60 // Swap tanks every 5 minutes (300 seconds)
-	useForwardTank := true
+func simulateBurn(forward, aft, br float64, resultLabel *gtk.Label, startButton *gtk.Button, windActive *bool, iceActive *bool, engineDegraded *bool, warningLabel *gtk.Label) {
+	ticker := time.NewTicker(time.Second) // Ticks every second for real-time simulation
+	defer ticker.Stop()
 
 	for range ticker.C {
-		// Check for wind simulation and adjust burn rate
-		actualBurnRate := br
+		actualBurnRate := br / 60 // Convert burn rate to lbs per second
 		if *windActive {
 			actualBurnRate *= 1.2 // Increase burn rate by 20% due to wind
 		}
-
-		// Burn fuel from the selected tank
-		if useForwardTank {
-			forward -= actualBurnRate / 60 // Convert burn rate to lbs/sec
-			if forward < 0 {
-				forward = 0
-			}
-		} else {
-			aft -= actualBurnRate / 60 // Convert burn rate to lbs/sec
-			if aft < 0 {
-				aft = 0
-			}
+		if *iceActive {
+			actualBurnRate *= 1.1 // Increase burn rate by 10% due to ice
+		}
+		if *engineDegraded {
+			actualBurnRate *= 1.3 // Increase burn rate by 30% due to degraded engine
 		}
 
-		// Increment the elapsed time
-		elapsed++
+		burnAmount := actualBurnRate / 2 // Split the burn rate between the two tanks per second
+		forward -= burnAmount
+		aft -= burnAmount
 
-		// Swap tanks based on interval
-		if elapsed%swapInterval == 0 {
-			useForwardTank = !useForwardTank
+		if forward < 0 {
+			forward = 0
+		}
+		if aft < 0 {
+			aft = 0
 		}
 
-		// Calculate total time till out of fuel
 		totalFuel := forward + aft
-		timeTillEmpty := totalFuel / (actualBurnRate / 60) // in minutes
-		if totalFuel == 0 {
-			timeTillEmpty = 0
-		}
+		timeTillEmpty := math.Max(forward, aft) / (actualBurnRate * 60) // in hours
 
-		// Update the result label; must be done in the main thread
+		hoursLeft := int(timeTillEmpty)
+		minutesLeft := int((timeTillEmpty - float64(hoursLeft)) * 60)
+
 		glib.IdleAdd(func() bool {
-			resultLabel.SetText(fmt.Sprintf("Forward Tank: %.2f lbs\nAft Tank: %.2f lbs\nTime till empty: %.2f minutes", forward, aft, timeTillEmpty))
-			if forward == 0 && aft == 0 {
+			resultLabel.SetText(fmt.Sprintf("Forward Tank: %.2f lbs\nAft Tank: %.2f lbs\nTotal Fuel: %.2f lbs\nTime till empty: %02d hours and %02d minutes", forward, aft, totalFuel, hoursLeft, minutesLeft))
+			if forward == 0 || aft == 0 {
 				ticker.Stop()
 				startButton.SetSensitive(true)
-				resultLabel.SetText(fmt.Sprintf("Simulation complete\nForward Tank: %.2f lbs\nAft Tank: %.2f lbs", forward, aft))
+				resultLabel.SetText(fmt.Sprintf("Simulation complete\nForward Tank: %.2f lbs\nAft Tank: %.2f lbs\nTotal Fuel: %.2f lbs", forward, aft, totalFuel))
 				return false // No further calls are required
 			}
-			return true // Continue calling until tanks are empty
+			return true // Continue calling until one of the tanks is empty
 		})
 
-		// Stop the simulation if both tanks are empty
-		if forward == 0 && aft == 0 {
-			break
-		}
+		glib.IdleAdd(func() bool {
+			warningText := ""
+			if *windActive {
+				warningText += "Caution: Wind Active\n"
+			}
+			if *iceActive {
+				warningText += "Warning: Ice on Wings\n"
+			}
+			if *engineDegraded {
+				warningText += "Warning: Engine Degradation\n"
+			}
+			warningLabel.SetText(warningText)
+			return true // Continue updating warnings
+		})
 	}
 
 	// After the simulation is done, re-enable the start button
