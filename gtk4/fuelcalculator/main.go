@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 
@@ -44,7 +45,8 @@ func activate(app *gtk.Application) {
 			color: white;
 		}
 	`)
-	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), cssProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+	display := gdk.DisplayGetDefault()
+	gtk.StyleContextAddProviderForDisplay(display, cssProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
 	// Create a grid to organize widgets
 	grid := gtk.NewGrid()
@@ -71,20 +73,53 @@ func activate(app *gtk.Application) {
 	groundspeedLabel := gtk.NewLabel("Groundspeed (knots):")
 	distanceFromBaseLabel := gtk.NewLabel("Distance from Base (nm):")
 
-	// Create radio buttons for Day VFR and Night VFR
-	dayVFRButton := gtk.Button(dayVFRButton)
-	dayVFRButtonLabel := gtk.NewLabel("Day VFR (30 mins)")
-	dayVFRButton.SetChild(dayVFRButtonLabel) // Manually set the label as a child of the radio button
-
-	nightVFRButton := gtk.Button(nighVFR)
-	nightVFRButtonLabel := gtk.NewLabel("Night VFR (45 mins)")
-	nightVFRButton.SetChild(nightVFRButtonLabel) // Manually set the label as a child of the radio button
+	// Create a label to display the results
+	resultLabel := gtk.NewLabel("")
 
 	// Create a button to calculate the fuel metrics
 	calculateButton := gtk.NewButtonWithLabel("Calculate Fuel Metrics")
+	calculateButton.ConnectClicked(func() {
+		// Retrieve and validate the user's input
+		forward, err := strconv.ParseFloat(forwardEntry.Text(), 64)
+		if err != nil {
+			log.Fatal("Invalid forward tank value")
+			return
+		}
+		aft, err := strconv.ParseFloat(aftEntry.Text(), 64)
+		if err != nil {
+			log.Fatal("Invalid aft tank value")
+			return
+		}
+		br, err := strconv.ParseFloat(brEntry.Text(), 64)
+		if err != nil {
+			log.Fatal("Invalid burn rate value")
+			return
+		}
+		descentFuel, err := strconv.ParseFloat(descentFuelEntry.Text(), 64)
+		if err != nil {
+			log.Fatal("Invalid descent fuel value")
+			return
+		}
+		groundspeed, err := strconv.ParseFloat(groundspeedEntry.Text(), 64)
+		if err != nil {
+			log.Fatal("Invalid groundspeed value")
+			return
+		}
+		distanceFromBase, err := strconv.ParseFloat(distanceFromBaseEntry.Text(), 64)
+		if err != nil {
+			log.Fatal("Invalid distance from base value")
+			return
+		}
 
-	// Create a label to display the results
-	resultLabel := gtk.NewLabel("")
+		// Calculate the required fuel values
+		vfrReserve := 45.0                               // VFR reserve in minutes (use 30 for day VFR)
+		rtbFuel := (distanceFromBase / groundspeed) * 60 // RTB fuel in lbs
+		bingoFuel := taxiAndTakeoffFuel + (br * vfrReserve / 60) + descentFuel + rtbFuel
+		onStationTime := (forward + aft - bingoFuel) / br // ONSTA time in minutes
+
+		// Display the results
+		resultLabel.SetText(fmt.Sprintf("Bingo Fuel: %.2f lbs\nONSTA Time: %.2f mins\nRTB Fuel: %.2f lbs", bingoFuel, onStationTime, rtbFuel))
+	})
 
 	// Add widgets to the grid
 	grid.Attach(forwardLabel, 0, 0, 1, 1)
@@ -99,56 +134,14 @@ func activate(app *gtk.Application) {
 	grid.Attach(groundspeedEntry, 1, 4, 1, 1)
 	grid.Attach(distanceFromBaseLabel, 0, 5, 1, 1)
 	grid.Attach(distanceFromBaseEntry, 1, 5, 1, 1)
-	grid.Attach(dayVFRButton, 0, 6, 2, 1)
-	grid.Attach(nightVFRButton, 0, 7, 2, 1)
-	grid.Attach(calculateButton, 0, 8, 2, 1)
-	grid.Attach(resultLabel, 0, 9, 2, 1)
-
-	// Set up the calculation logic
-	calculateButton.ConnectClicked(func() {
-		forwardText := forwardEntry.Text()
-		aftText := aftEntry.Text()
-		brText := brEntry.Text()
-		descentFuelText := descentFuelEntry.Text()
-		groundspeedText := groundspeedEntry.Text()
-		distanceFromBaseText := distanceFromBaseEntry.Text()
-
-		// Parse input values
-		forward, _ := strconv.ParseFloat(forwardText, 64)
-		aft, _ := strconv.ParseFloat(aftText, 64)
-		br, _ := strconv.ParseFloat(brText, 64)
-		descentFuel, _ := strconv.ParseFloat(descentFuelText, 64)
-		groundspeed, _ := strconv.ParseFloat(groundspeedText, 64)
-		distanceFromBase, _ := strconv.ParseFloat(distanceFromBaseText, 64)
-		dayVFR := dayVFRButton.GetActive()
-
-		// Calculate Bingo fuel and related metrics
-		bingoFuel, onstaTime, rtbTime := calculateFuelMetrics(forward, aft, br, descentFuel, groundspeed, distanceFromBase, dayVFR)
-
-		// Display the results
-		resultLabel.SetText(fmt.Sprintf("Bingo Fuel: %.2f lbs\nONSTA Time: %.2f minutes\nRTB Time: %.2f minutes", bingoFuel, onstaTime, rtbTime))
-	})
+	grid.Attach(calculateButton, 0, 6, 2, 1)
+	grid.Attach(resultLabel, 0, 7, 2, 1)
 
 	// Set the grid as the child of the window
 	window.SetChild(grid)
+
+	// Show the window
 	window.Show()
 }
 
-func calculateFuelMetrics(forward, aft, br, descentFuel, groundspeed, distanceFromBase float64, dayVFR bool) (bingoFuel, onstaTime, rtbTime float64) {
-	totalFuel := forward + aft
-	vfrFuel := br / 60 * 30 // Day VFR reserve (30 mins)
-	if !dayVFR {
-		vfrFuel = br / 60 * 45 // Night VFR reserve (45 mins)
-	}
-
-	// Calculate Bingo Fuel
-	bingoFuel = taxiAndTakeoffFuel + vfrFuel + descentFuel + (distanceFromBase / groundspeed * 60 * br / 60)
-
-	// Calculate ONSTA Time (Time on station)
-	onstaTime = (totalFuel - bingoFuel) / br
-
-	// Calculate RTB (Return to Base) Time
-	rtbTime = distanceFromBase / groundspeed
-
-	return bingoFuel, onstaTime, rtbTime
-}
+// No additional code needed after this point for the fuel calculator application
