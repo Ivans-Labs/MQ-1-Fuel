@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 
@@ -12,7 +11,7 @@ import (
 )
 
 const (
-	taxiAndTakeoffFuel = 35.0 // TM (Taxi and Takeoff Fuel) in lbs
+	taxiAndTakeoffFuel = 35.0 // Taxi and Takeoff Fuel in lbs
 )
 
 func main() {
@@ -57,7 +56,7 @@ func activate(app *gtk.Application) {
 	grid.SetMarginTop(10)
 	grid.SetMarginBottom(10)
 
-	// Create input fields for forward, aft tank values, and burn rate
+	// Create input fields for forward, aft tank values, burn rate, descent fuel, groundspeed, and distance from base
 	forwardEntry := gtk.NewEntry()
 	aftEntry := gtk.NewEntry()
 	brEntry := gtk.NewEntry()
@@ -68,10 +67,10 @@ func activate(app *gtk.Application) {
 	// Create labels for the input fields
 	forwardLabel := gtk.NewLabel("Forward Tank (lbs):")
 	aftLabel := gtk.NewLabel("Aft Tank (lbs):")
-	brLabel := gtk.NewLabel("Burn Rate (lbs/min):")
+	brLabel := gtk.NewLabel("Burn Rate (lbs/hr):")
 	descentFuelLabel := gtk.NewLabel("Descent Fuel (lbs):")
 	groundspeedLabel := gtk.NewLabel("Groundspeed (knots):")
-	distanceFromBaseLabel := gtk.NewLabel("Distance from Base (nm):")
+	distanceFromBaseLabel := gtk.NewLabel("Distance from Base (NM):")
 
 	// Create a label to display the results
 	resultLabel := gtk.NewLabel("")
@@ -81,44 +80,44 @@ func activate(app *gtk.Application) {
 	calculateButton.ConnectClicked(func() {
 		// Retrieve and validate the user's input
 		forward, err := strconv.ParseFloat(forwardEntry.Text(), 64)
-		if err != nil {
-			log.Fatal("Invalid forward tank value")
+		if handleError(err, resultLabel) {
 			return
 		}
 		aft, err := strconv.ParseFloat(aftEntry.Text(), 64)
-		if err != nil {
-			log.Fatal("Invalid aft tank value")
+		if handleError(err, resultLabel) {
 			return
 		}
-		br, err := strconv.ParseFloat(brEntry.Text(), 64)
-		if err != nil {
-			log.Fatal("Invalid burn rate value")
+		br, err := strconv.ParseFloat(brEntry.Text(), 64) // Burn rate in lbs/hr
+		if handleError(err, resultLabel) {
 			return
 		}
+		br /= 60 // Convert burn rate to lbs/min for calculations
 		descentFuel, err := strconv.ParseFloat(descentFuelEntry.Text(), 64)
-		if err != nil {
-			log.Fatal("Invalid descent fuel value")
+		if handleError(err, resultLabel) {
 			return
 		}
 		groundspeed, err := strconv.ParseFloat(groundspeedEntry.Text(), 64)
-		if err != nil {
-			log.Fatal("Invalid groundspeed value")
+		if handleError(err, resultLabel) {
 			return
 		}
 		distanceFromBase, err := strconv.ParseFloat(distanceFromBaseEntry.Text(), 64)
-		if err != nil {
-			log.Fatal("Invalid distance from base value")
+		if handleError(err, resultLabel) {
 			return
 		}
 
 		// Calculate the required fuel values
-		vfrReserve := 45.0                               // VFR reserve in minutes (use 30 for day VFR)
-		rtbFuel := (distanceFromBase / groundspeed) * 60 // RTB fuel in lbs
-		bingoFuel := taxiAndTakeoffFuel + (br * vfrReserve / 60) + descentFuel + rtbFuel
+		vfrReserve := 45.0 // VFR reserve in minutes (use 30 for day VFR)
+		transitTime := distanceFromBase / groundspeed
+		rtbFuel := transitTime * 60 * br // RTB fuel in lbs
+		bingoFuel := taxiAndTakeoffFuel + (br * vfrReserve) + descentFuel + rtbFuel
 		onStationTime := (forward + aft - bingoFuel) / br // ONSTA time in minutes
 
+		// Convert ONSTA time to hours and minutes
+		onstaHours := int(onStationTime) / 60
+		onstaMinutes := int(onStationTime) % 60
+
 		// Display the results
-		resultLabel.SetText(fmt.Sprintf("Bingo Fuel: %.2f lbs\nONSTA Time: %.2f mins\nRTB Fuel: %.2f lbs", bingoFuel, onStationTime, rtbFuel))
+		resultLabel.SetText(fmt.Sprintf("Bingo Fuel: %.2f lbs\nONSTA Time: %02d hr %02d min\nRTB Fuel: %.2f lbs\nTransit Time: %.2f hr", bingoFuel, onstaHours, onstaMinutes, rtbFuel, transitTime))
 	})
 
 	// Add widgets to the grid
@@ -142,6 +141,15 @@ func activate(app *gtk.Application) {
 
 	// Show the window
 	window.Show()
+}
+
+// handleError is a helper function to handle input errors and update the result label
+func handleError(err error, resultLabel *gtk.Label) bool {
+	if err != nil {
+		resultLabel.SetText("Error: " + err.Error())
+		return true
+	}
+	return false
 }
 
 // No additional code needed after this point for the fuel calculator application
